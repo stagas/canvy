@@ -1,12 +1,27 @@
 /** @jsxImportSource sigl */
 import $ from 'sigl'
 
+export interface Lens {
+  line: number
+  message: string
+}
+
+export interface Marker {
+  key: string
+  index: number
+  size: number
+  kind: 'param' | 'error'
+  color: string
+  hoverColor: string
+  message: string
+}
+
 // import { Matrix, Point, Rect } from 'sigl'
 // import { getElementOffset } from 'get-element-offset'
 
 import { cheapRandomId } from 'everyday-utils'
 import { EditorScene } from './editor-scene'
-import EditorWorker from './editor-worker'
+import { Editor } from './editor-worker'
 
 // const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform)
 
@@ -18,8 +33,8 @@ export const Editors = new Set()
 export class File {
   id: string
   title: string
-  value: string
-  editor!: CanvyElement
+  value?: string
+  canvy!: CanvyElement
   previousId: string
 
   constructor(data: Partial<File> = {}) {
@@ -45,16 +60,15 @@ export class File {
   }
 
   focus() {
-    this.editor.worker.postMessage({ call: 'setFocusedEditorById', id: this.id })
+    this.canvy.editor.setFocusedEditorById({ id: this.id })
   }
 
   setColor(color: string) {
-    this.editor.worker.postMessage({ call: 'setColor', id: this.id, color })
+    this.canvy.editor.setColor({ color })
   }
 
   setData(data: { id: string; title: string }) {
-    this.editor.worker.postMessage({
-      call: 'setEditorData',
+    this.canvy.editor.setEditorData({
       id: this.previousId,
       data,
     })
@@ -67,12 +81,11 @@ export class File {
   }
 
   delete() {
-    this.editor.files.splice(this.editor.files.indexOf(this), 1)
-    this.editor.worker.postMessage({
-      call: 'deleteEditor',
+    this.canvy.files.splice(this.canvy.files.indexOf(this), 1)
+    this.canvy.editor.deleteEditor({
       id: this.id,
     })
-    if (!this.editor.files.length) {
+    if (!this.canvy.files.length) {
       // const file = new File(this.editor)
       // this.editor.files.push(file)
       // this.setData(file.toJSON())
@@ -81,37 +94,35 @@ export class File {
   }
 
   moveUp() {
-    const index = this.editor.files.indexOf(this)
+    const index = this.canvy.files.indexOf(this)
     if (index >= 1) {
-      this.editor.worker.postMessage({
-        call: 'moveEditorUp',
+      this.canvy.editor.moveEditorUp({
         id: this.id,
       })
-      const self = this.editor.files[index]
-      const other = this.editor.files[index - 1]
-      this.editor.files.splice(index - 1, 2, self, other)
+      const self = this.canvy.files[index]
+      const other = this.canvy.files[index - 1]
+      this.canvy.files.splice(index - 1, 2, self, other)
       return [self, other]
     }
   }
 
   moveDown() {
-    const index = this.editor.files.indexOf(this)
-    if (index < this.editor.files.length - 1) {
-      this.editor.worker.postMessage({
-        call: 'moveEditorDown',
+    const index = this.canvy.files.indexOf(this)
+    if (index < this.canvy.files.length - 1) {
+      this.canvy.editor.moveEditorDown({
         id: this.id,
       })
-      const self = this.editor.files[index]
-      const other = this.editor.files[index + 1]
-      this.editor.files.splice(index, 2, other, self)
+      const self = this.canvy.files[index]
+      const other = this.canvy.files[index + 1]
+      this.canvy.files.splice(index, 2, other, self)
       return [other, self]
     }
   }
 }
 
 export interface CanvyEvents {
-  entermarker: CustomEvent<{ marker: unknown, markerIndex: number }>
-  leavemarker: CustomEvent<{ marker: unknown, markerIndex: number }>
+  entermarker: CustomEvent<{ marker: Marker, markerIndex: number }>
+  leavemarker: CustomEvent<{ marker: Marker, markerIndex: number }>
   event: CustomEvent<{ name: string; data: any }>
   edit: CustomEvent
 }
@@ -123,12 +134,21 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
   @$.out() fontSize = 11
   @$.attr() focused = false
 
+  initialValue?: string
+
+  singleComment = '//'
+
   caret: any
   scene?: EditorScene
 
-  worker!: Worker
+  editor!: Editor
+
   pixelRatio = window.devicePixelRatio
   isVisible = true
+
+  get value() {
+    return this.files[0]?.value
+  }
 
   // rect?: $.Rect
 
@@ -149,7 +169,7 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
   canvas?: HTMLCanvasElement
   font?: string
 
-  _setCaret({ caret }: any) {
+  setCaret({ caret }: any) {
     this.caret = caret
   }
   _onready() {
@@ -158,11 +178,11 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
   _ondraw() {
   }
 
-  _onblur = $(this).reduce(({ $, worker }) =>
+  _onblur = $(this).reduce(({ $, editor }) =>
     () => {
       $.focused = false
       $.hoveringMarkerIndex = null
-      worker.postMessage({ call: 'onblur' })
+      editor.onblur()
     }
   )
 
@@ -227,58 +247,71 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
     }
   )
 
+  snapshot: any
+
+  _onsnapshot = $(this).reduce(({ $ }) =>
+    (snapshot: any) => {
+      delete snapshot.call
+      $.snapshot = snapshot
+    }
+  )
+
+  setFromSnapshot = $(this).reduce(({ editor }) => (snapshot: any) => {
+    return editor.setFromSnapshot(snapshot)
+  })
+
   hoveringMarkerIndex?: number | null
+  hoveringMarker?: Marker | null
 
   _onentermarker = $(this).reduce(({ $, host }) =>
-    ({ markerIndex, marker }: { markerIndex: number, marker: unknown }) => {
+    ({ markerIndex, marker }: { markerIndex: number, marker: Marker }) => {
       if (!~markerIndex) return
       $.hoveringMarkerIndex = markerIndex
+      $.hoveringMarker = marker
       host.dispatch.composed('entermarker', { marker, markerIndex })
     }
   )
 
   _onleavemarker = $(this).reduce(({ $, host }) =>
-    ({ markerIndex, marker }: { marker: unknown, markerIndex: number }) => {
+    ({ markerIndex, marker }: { marker: Marker, markerIndex: number }) => {
       $.hoveringMarkerIndex = null
+      $.hoveringMarker = null
       host.dispatch.composed('leavemarker', { marker, markerIndex })
     }
   )
 
-  replaceChunk = $(this).reduce(({ worker }) => function callReplaceChunk(params: { start: number, end: number, text: string, code: string }) {
-    worker.postMessage({
-      call: 'replaceChunk',
-      ...params
-    })
+  replaceChunk = $(this).reduce(({ editor }) => function callReplaceChunk(params: { start: number, end: number, text: string, code: string }) {
+    return editor.replaceChunk(params)
   })
 
-  setMarkers = $(this).reduce(({ worker }) => function setMarkers(markers: any[]) {
-    worker.postMessage({
-      call: 'onmarkers',
-      markers,
-    })
+
+  setMarkers = $(this).reduce(({ editor }) => function setMarkers(markers: Marker[]) {
+    return editor.onmarkers({ markers })
   })
 
-  setValue = $(this).reduce(({ worker }) => function setValue(value: string, clearHistory?: boolean) {
-    worker.postMessage({
-      call: 'setValue',
+  setLenses = $(this).reduce(({ editor }) => function setLenses(lenses: Lens[]) {
+    return editor.setLenses({ lenses })
+  })
+
+  setValue = $(this).reduce(({ editor }) => function setValue(value: string, clearHistory?: boolean, scrollToTop?: boolean) {
+    return editor.setValue({
       value,
-      clearHistory
+      clearHistory,
+      scrollToTop,
     })
   })
-
-  get value() {
-    return this.files[0]?.value
-  }
 
   mounted($: CanvyElement['$']) {
     $.effect(({ host, scene, _onblur }) => {
       host.tabIndex = 0
       return [
-        $.on(host).focus(() => {
-          ; ($.focusedFile ?? $.files[0])?.focus()
+        $.on(host).focus((e) => {
+          e.stopPropagation()
+            ; ($.focusedFile ?? $.files[0])?.focus()
           scene.activeEditor = host
         }),
-        $.on(host).blur(() => {
+        $.on(host).blur((e) => {
+          e.stopPropagation()
           if (scene.activeEditor === host) {
             _onblur()
             scene.activeEditor = null
@@ -296,16 +329,54 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
     })
 
     // this.isVisible = true
-    $.effect(({ host }) => {
-      $.worker = new EditorWorker() as EditorWorker & Worker
-      $.worker!.onerror = error => host.dispatch('error' as any, error)
-      $.worker!.onmessage = ({ data }) => {
-        const method = '_' + data.call
-        if (!(method in this)) {
-          throw new Error('Editor: no such method: ' + method)
-        }
-        ; (this as any)['_' + data.call](data)
-      }
+    $.effect(() => {
+      $.editor = new Editor()
+
+      $.editor.on('ready', () => this._onready())
+      // @ts-ignore
+      $.editor.on('entermarker', (...args) => this._onentermarker(...args))
+      // @ts-ignore
+      $.editor.on('leavemarker', (...args) => this._onleavemarker(...args))
+      // @ts-ignore
+      $.editor.on('change', (...args) => this._onchange(...args))
+      // @ts-ignore
+      $.editor.on('edit', (...args) => this._onedit(...args))
+      // @ts-ignore
+      $.editor.on('selection', (...args) => this._onselection(...args))
+      // @ts-ignore
+      $.editor.on('focus', (...args) => this._onfocus(...args))
+      // @ts-ignore
+      $.editor.on('blur', (...args) => this._onblur(...args))
+      // @ts-ignore
+      $.editor.on('resize', (...args) => this._onresize(...args))
+      // @ts-ignore
+      $.editor.on('caret', (...args) => this.setCaret(...args))
+
+      // const { port1, port2 } = new MessageChannel()
+
+      // $.worker = new EditorWorker() as EditorWorker & Worker
+      // // $.worker!.postMessage = ({ data }) => {
+      // //   const method = '_' + data.call
+      // //   if (!(method in this)) {
+      // //     throw new Error('Editor: no such method: ' + method)
+      // //   }
+      // //   ; (this as any)['_' + data.call](data)
+      // // }
+      // $.worker.postMessage = (msg, xfer) => port2.postMessage(msg, xfer as any)
+
+      // port2.onmessage = (ev) => $.worker.onmessage(ev)
+
+      // $.rpc = rpc(port1, this as any)
+
+      // $.worker!.onerror = error => host.dispatch('error' as any, error)
+
+      // $.worker!.onmessage = ({ data }) => {
+      //   const method = '_' + data.call
+      //   if (!(method in this)) {
+      //     throw new Error('Editor: no such method: ' + method)
+      //   }
+      //   ; (this as any)['_' + data.call](data)
+      // }
     })
 
     $.effect(({ host }) =>
@@ -315,50 +386,46 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
     )
 
     // when size increases, we render immediately
-    $.effect(({ canvas, worker, pixelRatio, rect: { size }, ready }) => {
+    $.effect(({ canvas, editor, pixelRatio, rect: { size }, ready }) => {
       if (!ready) return
 
       requestAnimationFrame(() => {
         Object.assign(canvas.style, size.toStyleSize())
       })
 
-      worker.postMessage({
-        call: 'onresize',
-        ...size.scale(pixelRatio).toSizeObject(),
-      })
+      editor.onresize(size.scale(pixelRatio).toSizeObject())
     })
 
     // the raf here prevents initial flicker
-    $.effect.once.raf(({ host, size, files, worker, canvas, pixelRatio }) => {
+    $.effect.once.raf(({ host, size, files, editor, canvas, pixelRatio }) => {
       if (files.length === 0) {
         const file = new File()
-        file.value = ''
-        file.editor = host
+        file.value = $.initialValue ?? ''
+        file.canvy = host
         files = $.files = [file]
       }
 
       files.forEach(file => {
-        file.editor = host
+        file.canvy = host
       })
 
       canvas.width = size.width
       canvas.height = size.height
       // Object.assign(canvas.style, size.scale(1 / pixelRatio).toStyleSize())
 
-      worker.postMessage(
-        {
-          call: 'setup',
-          ...size.scale(pixelRatio).toSizeObject(),
-          font: $.font,
-          fontSize: $.fontSize,
-          titlebarHeight: 0,
-          // autoResize: true,
-          files: files.map(file => file.toJSON()),
-          outerCanvas: canvas, // TODO: in a real worker situation this should be transferred
-          pixelRatio,
-        },
-        [canvas as unknown as Transferable]
-      )
+      editor.setup({
+        ...size.scale(pixelRatio).toSizeObject(),
+        font: $.font,
+        fontSize: $.fontSize,
+        singleComment: $.singleComment,
+        titlebarHeight: 0,
+        // autoResize: true,
+        files: files.map(file => file.toJSON()),
+        outerCanvas: canvas, // TODO: in a real worker situation this should be transferred
+        pixelRatio,
+      })
+      // ,
+      // [canvas as unknown as Transferable]
     })
 
     $.render(() => (
@@ -660,7 +727,7 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
   // }
 
   handleEvent = (eventName: string, data: object) => {
-    if (this.hoveringMarkerIndex != null && eventName === 'mousewheel') {
+    if (this.hoveringMarker?.kind == 'param' && eventName === 'mousewheel') {
       this.dispatch('event', { name: eventName, data })
       return
     }
@@ -674,7 +741,7 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
     //   if (handled != null) {
     //     return false
     //   }
-    this.worker.postMessage({ call: 'on' + eventName, ...data })
+    ; (this.editor as any)['on' + eventName]({ ...data })
   }
 }
 

@@ -1,14 +1,31 @@
 import $ from 'sigl/worker'
+import { Event } from 'zerolag'
 
 // epic TODO: refactor pixelRatio mess
 
 const isWorker = typeof window === 'undefined' && typeof postMessage !== 'undefined'
 
+const escapeRegExp = (s: string) => s.replace(/\\/gm, '\\\\')
 
 import { Regexp, Area, Point, Buffer, Syntax } from 'zerolag'
+import { Lens, Marker } from './editor'
 
 import { History } from './history'
 // import themes from './themes.js'
+
+function paintText(c: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  text: string,
+  color: string,
+  x: number,
+  y: number) {
+  c.lineWidth = 1.95
+  c.strokeStyle = '#0008'
+  c.miterLimit = 2
+  c.lineJoin = 'round'
+  c.strokeText(text, x, y + 0.8)
+  c.fillStyle = color
+  c.fillText(text, x, y)
+}
 
 type PointLike = Partial<Point>
 // type AreaLike = Partial<Area>
@@ -93,30 +110,32 @@ interface Box {
 const NEWLINE = Regexp.create(['newline'])
 // const WORDS = Regexp.create(['words'], 'g')
 
-export default class PseudoWorker {
-  editor: Editor
-  constructor() {
-    this.editor = new Editor()
-    this.editor.postMessage = data => this.onmessage({ data })
-  }
-  onmessage(_arg0: { data: any }) {
-    throw new Error('Method not implemented.')
-  }
+// export default class PseudoWorker {
+//   editor: Editor
+//   rpc: Rpc
+//   constructor() {
+//     this.editor = new Editor()
+//     this.editor.postMessage = data => this.onmessage({ data })
+//     this.rpc = rpc(this, this.editor as any)
+//   }
+//   // onmessage(_arg0: { data: any }) {
+//   //   // throw new Error('Method not implemented.')
+//   // }
 
-  postMessage(data: { call: string; id?: string }) {
-    if (!(data.call in this.editor)) {
-      throw new ReferenceError('EditorWorker: no such method: ' + data.call)
-    }
-    ; (this.editor as any)[data.call](data)
-  }
-}
+//   // postMessage(data: { call: string; id?: string }) {
+//   //   if (!(data.call in this.editor)) {
+//   //     throw new ReferenceError('EditorWorker: no such method: ' + data.call)
+//   //   }
+//   //   ; (this.editor as any)[data.call](data)
+//   // }
+// }
 
 type AnimType = 'ease' | 'linear' | false | undefined
 
 interface File {
   id: string
   title: string
-  value: string
+  value?: string
 }
 
 interface Anim {
@@ -127,7 +146,7 @@ interface Anim {
   threshold: { tiny: number; near: number; mid: number; far: number }
   scale: { tiny: number; near: number; mid: number; far: number }
 }
-class Editor {
+export class Editor extends Event {
   isReady = false
   _deleted: any
   autoResize: any
@@ -174,6 +193,7 @@ class Editor {
   usedMouseRight!: boolean
   view!: { left: number; top: any; width: any; height: number }
   constructor(data: Partial<Editor> = {}) {
+    super()
     // TODO: this is a workaround
     // this.postMessage = self?.postMessage.bind(self)
 
@@ -199,6 +219,7 @@ class Editor {
     this.animScrollStart = this.animScrollStart.bind(this)
     this.animScrollTick = this.animScrollTick.bind(this)
 
+    // this.hasFocus = false
     // uncomment below for verbose debugging
     // this.verboseDebug()
   }
@@ -224,15 +245,14 @@ class Editor {
 
   update() {
     const editor = this.controlEditor.focusedEditor ?? this.controlEditor
-    this.postMessage({
-      call: 'onupdate',
+    return {
       file: editor.toJSON(),
-    })
+    }
   }
 
-  postMessage(_arg0: Record<string, any>) {
-    throw new Error('Method not implemented.')
-  }
+  // postMessage(_arg0: Record<string, any>) {
+  //   throw new Error('Method not implemented.')
+  // }
 
   toJSON() {
     return {
@@ -255,6 +275,9 @@ class Editor {
     this.controlEditor.history.clear()
   }
 
+  singleComment?: string
+  singleCommentRegExp?: RegExp
+
   async setup(
     data: {
       outerCanvas?: any
@@ -267,8 +290,9 @@ class Editor {
       titlebarDir?: any
       files?: any
       pixelRatio?: any
+      singleComment?: string
     },
-    controlEditor: this
+    controlEditor?: this
   ) {
     const { pixelRatio } = data
     const { width, height } = data.outerCanvas
@@ -278,6 +302,10 @@ class Editor {
     this.font = data.font
     this.fontSize = data.fontSize ?? this.fontSize
     this.autoResize = data.autoResize ?? this.autoResize
+
+    this.singleComment = data.singleComment ?? '//'
+
+    this.singleCommentRegExp = new RegExp(`^([^${escapeRegExp(this.singleComment)}]*)${escapeRegExp(this.singleComment)} ?`, 'gm')
 
     try {
       // TODO: use a utility to extract regexp group
@@ -344,7 +372,7 @@ class Editor {
     this.canvas.debug = createCanvas(width, height)
     this.canvas.scroll = {
       width: this.canvas.width,
-      height: this.canvas.height,
+      height: this.canvas.height - this.canvas.padding * this.canvas.pixelRatio,
     }
 
     this.ctx = {}
@@ -391,18 +419,17 @@ class Editor {
       // })
       this.history.on('change', editor => {
         // console.log('change')
-        this.postMessage({
-          call: 'onchange',
+        this.emit('change', {
           file: editor.toJSON(),
         })
       })
+
       this.history.on('edit', editor => {
         // console.log('edit')
         const file = editor.toJSON()
         // this.lastTexts.push(file.value as string)
         // if (this.lastTexts.length > 5) this.lastTexts.shift()
-        this.postMessage({
-          call: 'onedit',
+        this.emit('edit', {
           file,
         })
       })
@@ -428,9 +455,7 @@ class Editor {
 
     if (!this.isSubEditor) {
       setTimeout(() => {
-        this.postMessage({
-          call: 'onready',
-        })
+        this.emit('ready')
       })
     }
   }
@@ -448,7 +473,7 @@ class Editor {
     const editor = new Editor()
 
     // TODO: this is a workaround
-    editor.postMessage = this.postMessage
+    // editor.postMessage = this.postMessage
 
     await editor.setup(this.setupData, this)
     this.subEditors.push(editor)
@@ -461,7 +486,7 @@ class Editor {
     this.char.offsetTop = 0.5
     this.char.metrics = this.ctx.text.measureText('M')
     this.char.width = this.char.metrics.width
-    this.char.height = (this.char.metrics.actualBoundingBoxDescent - this.char.metrics.actualBoundingBoxAscent) * 1.15 //.96 //1.68
+    this.char.height = Math.round((this.char.metrics.actualBoundingBoxDescent - this.char.metrics.actualBoundingBoxAscent) * 1.15) //.96 //1.68
     // this.char.metrics.emHeightDescent
     this.gutter = { padding: 7, width: 0, height: 0 }
 
@@ -505,10 +530,9 @@ class Editor {
       pos: this.caret?.pos ?? new Point(),
       px: this.caret?.px ?? new Point(),
       align: 0,
-      width: (this.fontSize / 4) | 0,
-      height: this.line.height + this.line.padding / 2 + 2,
+      width: 1, //(this.fontSize / 8) | 0,
+      height: this.line.height,
     }
-
   }
 
   setColor({ color }: { color: string }) {
@@ -575,6 +599,37 @@ class Editor {
     this.restoreHistory(history)
 
     this.draw()
+  }
+
+  getSnapshotJson() {
+    return {
+      value: this.buffer.toString(),
+      caret: this.caret.pos.copy(),
+      scroll: this.scroll.pos.copy(),
+      history: this.history.toJSON()
+    }
+  }
+
+  setFromSnapshot(snapshot: any) {
+    this.markClear()
+    this.buffer.setText(snapshot.value)
+
+    this.updateTitle()
+    this.updateSizes(true)
+    this.updateText()
+    this.updateMark()
+
+    this.history.clear()
+    if (snapshot.caret && snapshot.scroll && snapshot.history) {
+      this.scrollTo(snapshot.scroll)
+      this.setCaret(snapshot.caret)
+      this.restoreHistory(snapshot.history)
+    } else {
+      this.scrollTo({ x: 0, y: 0 })
+      this.setCaret({ x: 0, y: 0 })
+    }
+    // this.setFocusedEditor(this)
+    this.drawSync()
   }
 
   moveEditorUp({ id }: { id: string }) {
@@ -698,7 +753,7 @@ class Editor {
   setData(data: File) {
     if ('id' in data) this.id = data.id
     if ('title' in data) this.title = data.title
-    if ('value' in data) this.setText(data.value)
+    if ('value' in data) this.setText(data.value ?? '')
   }
 
   erase(moveByChars = 0, inView = true, noHistory = false) {
@@ -861,7 +916,7 @@ class Editor {
   markClear(force?: boolean) {
     if ((this.keys.has('Shift') && !force) || !this.markActive) return
 
-    this.postMessage({ call: 'onselection', text: '' })
+    this.emit('selection', { text: '' })
 
     this.markActive = false
     this.mark.set({
@@ -1151,7 +1206,7 @@ class Editor {
     // this.drawSync()
 
     const x = editor.caret.px.x * this.canvas.pixelRatio + this.canvas.gutter.width - this.scroll.pos.x
-    const y = editor.caret.px.y * this.canvas.pixelRatio + this.titlebar.height + editor.offsetTop - editor.scroll.pos.y
+    const y = editor.caret.px.y * this.canvas.pixelRatio + this.titlebar.height + editor.offsetTop - editor.scroll.pos.y + this.canvas.padding * this.canvas.pixelRatio - this.canvas.pixelRatio
 
     let dx = Math.floor(x < left ? left - x : x > right ? right - x : 0)
 
@@ -1190,11 +1245,11 @@ class Editor {
       y: px.y,
     })
     this.highlightBlock()
-    this.postMessage({ call: 'setCaret', caret: this.caret.pos })
+    this.emit('caret', { caret: this.caret.pos })
     return prevCaretPos.minus(this.caret.pos)
   }
 
-  getPointByMouse({ clientX, clientY }: { clientX: number; clientY: number }) {
+  getPointByMouse({ clientX, clientY }: { clientX: number; clientY: number }, round?: boolean) {
     const y = Math.max(
       0,
       Math.min(
@@ -1210,7 +1265,10 @@ class Editor {
       )
     )
 
-    let x = Math.max(0, Math.ceil((clientX - (this.padding.width) / this.canvas.pixelRatio - (-this.scroll.pos.x) / this.canvas.pixelRatio) / this.char.width!))
+    let x = Math.max(0,
+      Math[round ? 'round' : 'ceil'](
+        (clientX - (this.padding.width) / this.canvas.pixelRatio - (-this.scroll.pos.x) / this.canvas.pixelRatio + 1
+        ) / this.char.width!))
 
     const actualIndex = this.getCoordsTabs({ x, y })
 
@@ -1241,7 +1299,7 @@ class Editor {
 
     const loc = this.buffer.loc()
 
-    const lensSize = Math.max(...Object.values(this.lenses).map(x => x.length))
+    const lensSize = Math.max(0, ...Object.values(this.lenses).map(x => x.length))
 
     // TODO: need to pass lenses here to get the right longest line length
     const longestLine = this.buffer.getLongestLine() as unknown as { length: number; lineNumber: number }
@@ -1267,7 +1325,9 @@ class Editor {
       this.gutter.padding = 0
 
       this.canvas.back.height = this.canvas.text.height =
-        this.canvas.padding * this.canvas.pixelRatio * 2 + (1 + this.sizes.loc) * this.char.px!.height // line.height)
+        // this.canvas.padding *
+        this.canvas.pixelRatio * 2 - 1
+        + (1 + this.sizes.loc) * this.char.px!.height // line.height)
       // * this.canvas.pixelRatio
 
       if (!isWorker && this.autoResize && !this.isSubEditor) {
@@ -1277,15 +1337,24 @@ class Editor {
           this.canvas.text.height + this.titlebar.height + this.canvas.padding * this.canvas.pixelRatio
         this.page.lines = Math.floor(this.view.height / this.char.px!.height)
           ; (this.canvas.outer as HTMLCanvasElement).style.height = this.canvas.outer.height / this.canvas.pixelRatio + 'pt'
-        this.postMessage({ call: 'onresize', width: this.canvas.width, height: this.canvas.height })
+        this.emit('resize', { width: this.canvas.width, height: this.canvas.height })
       }
 
       this.subEditorsHeight = this.subEditors.reduce((p, n) => p + n.canvas.text.height + this.titlebar.height, 0)
 
       this.canvas.scroll!.height = Math.floor(
         this.subEditorsHeight +
-        (!isWorker && this.autoResize ? 0 : this.canvas.text.height) -
-        (this.canvas.padding + this.caret.height - this.line.padding) * this.canvas.pixelRatio
+        Math.max(0, (!isWorker && this.autoResize
+          ? 0
+          : this.canvas.text.height
+          - this.canvas.padding * this.canvas.pixelRatio * 4
+          + 1
+        )
+          - this.page!.height! / 6
+        )
+
+        // -
+        // (this.canvas.padding + this.caret.height - this.line.padding) * this.canvas.pixelRatio
       )
       // + 4 // TODO: this shouldn't be needed
 
@@ -1323,7 +1392,7 @@ class Editor {
     if (changed) {
       this.scrollbar.area!.width = this.canvas.text.width + this.char.px!.width * 2
 
-      this.scrollbar.area!.height = this.canvas.scroll!.height
+      this.scrollbar.area!.height = this.canvas.scroll!.height + this.page!.height!
 
       this.scrollbar.scale!.width = this.scrollbar.view!.width / this.scrollbar.area!.width
       this.scrollbar.scale!.height = this.scrollbar.view!.height / this.scrollbar.area!.height
@@ -1384,15 +1453,19 @@ class Editor {
 
   lenses: Record<number, string> = { 0: '' }
   // lenses: Record<number, string> = { 1: 'error here', 3: 'and here..' }
-  onlenses = (lenses: Record<number, string>) => {
-    this.lenses = lenses
+  setLenses = ({ lenses }: { lenses: Lens[] }) => {
+    this.lenses = lenses.reduce((p, n) => {
+      p[n.line] = n.message
+      return p
+    }, {} as Record<number, string>)
     this.updateSizes()
+    this.updateMark()
     this.updateText()
     this.draw()
   }
 
-  origMarkers: ({ index: number, size: number, color: string, kind: string })[] = []
-  onmarkers = ({ markers }: { markers: ({ index: number, size: number, color: string, hoverColor: string, kind: string })[] }) => {
+  origMarkers: Marker[] = []
+  onmarkers = ({ markers }: { markers: Marker[] }) => {
     this.origMarkers = markers
     this.markers = markers.map(({ index, size, color, hoverColor, kind }) => {
       const begin = this.buffer.getOffsetPoint(index)
@@ -1403,8 +1476,7 @@ class Editor {
       this.updateMark()
       this.draw()
       if (this.hoveredMarkerIndex) {
-        this.postMessage({
-          call: 'onentermarker',
+        this.emit('entermarker', {
           markerIndex: this.hoveredMarkerIndex,
           marker: this.origMarkers[this.hoveredMarkerIndex]
         })
@@ -1428,7 +1500,7 @@ class Editor {
     const pieces = this.syntax.highlight(code + '\n.')
 
     // const AnyChar = /\S/  // TODO: ???????????
-    const fh = this.line.height //Math.ceil(this.line.height)
+    const fh = this.line!.height! + .15  //Math.ceil(this.line.height)
     let i = 0,
       x = 0,
       y = 0,
@@ -1455,6 +1527,7 @@ class Editor {
     //   i++
     // }
 
+    const bgBlack = '#000b'
     // i = 0, x = 0, y = 0, lastNewLine = 0
     const queue = []
     let lens
@@ -1464,18 +1537,26 @@ class Editor {
       idx = index!
 
       if (type === 'newline') {
-        back.fillStyle = 'rgba(0,0,0,.7)'
+        back.fillStyle = bgBlack
         back.fillRect(0, y - 1.5, this.char.width! * (index! - lastNewLine), fh!)
 
-        for (const [type, string, x, y] of queue) {
+        for (const [type, string, x, y] of queue as any) {
           const bg = (backgrounds as any)[type as any]
           if (bg) {
             back.fillStyle = bg
             back.fillRect(+x, +y - 1.5, this.char.width! * (string as string).length, fh!)
           }
-          // text.fillStyle = '#00f' //(theme as any)[type as any]
-          text.fillStyle = (theme as any)[type as any]
-          text.fillText(string as unknown as string, x as number, (y as number) + this.char.offsetTop!)
+
+          paintText(text, string, (theme as any)[type], x, y + this.char.offsetTop!)
+
+          // // text.fillStyle = '#00f' //(theme as any)[type as any]
+          // text.lineWidth = 1.95
+          // text.strokeStyle = '#0008'
+          // text.miterLimit = 2
+          // text.lineJoin = 'round'
+          // text.strokeText(string as unknown as string, x as number, (y as number) + this.char.offsetTop! + 0.8)
+          // text.fillStyle = (theme as any)[type as any]
+          // text.fillText(string as unknown as string, x as number, (y as number) + this.char.offsetTop!)
         }
         queue.length = 0
 
@@ -1486,8 +1567,17 @@ class Editor {
         lens = this.lenses[i]
         if (lens) {
           text.font = `italic ${this.fontSize * 0.85 | 0}px ${this.fontAlias}`
-          text.fillStyle = '#f31'
-          text.fillText(lens, (this.buffer.getLineLength(i - 1) + 1.25) * this.char.width!, (i - 1) * this.line.height! + this.char.offsetTop! + this.canvas.padding + this.char.height! * 0.05)
+
+          paintText(text, lens, '#f31',
+            (this.buffer.getLineLength(i - 1) + 1.25) * this.char.width!,
+            (i - 1) * this.line.height!
+            + this.char.offsetTop!
+            + this.canvas.padding
+            // + this.char.height! * 0.05
+          )
+
+          // text.fillStyle = '#f31'
+          // text.fillText(lens, (this.buffer.getLineLength(i - 1) + 1.25) * this.char.width!, (i - 1) * this.line.height! + this.char.offsetTop! + this.canvas.padding + this.char.height! * 0.05)
           text.font = `normal ${this.fontSize | 0}px ${this.fontAlias}`
         }
 
@@ -1508,24 +1598,36 @@ class Editor {
     }
 
     // if (queue.length) {
-    back.fillStyle = 'rgba(0,0,0,.7)'
+
+    back.fillStyle = bgBlack
     back.fillRect(0, y - 1.5, this.char.width! * (idx - lastNewLine + (queue[queue.length - 1][1] as string)!.length) + 8, fh!)
+
     // text.fillRect(0, y, this.char.width * string.length + 4, fh)
-    for (const [type, string, x, y] of queue.slice(0, -1)) {
+    for (const [type, string, x, y] of queue.slice(0, -1) as any) {
       const bg = (backgrounds as any)[type as any]
       if (bg) {
         back.fillStyle = bg
         back.fillRect(+x, +y - 1.5, this.char.width! * (string as string).length, fh!)
       }
-      text.fillStyle = (theme as any)[type]
-      text.fillText(string as unknown as string, x as number, y as number)
+      paintText(text, string, (theme as any)[type], x, y)
+      // text.fillStyle = (theme as any)[type]
+      // text.fillText(string as unknown as string, x as number, y as number)
     }
 
     lens = this.lenses[i]
     if (lens) {
       text.font = `italic ${this.fontSize * 0.85 | 0}px ${this.fontAlias}`
-      text.fillStyle = '#f31'
-      text.fillText(lens, (this.buffer.getLineLength(i - 1) + 1.25) * this.char.width!, (i - 1) * this.line.height! + this.char.offsetTop! + this.canvas.padding + this.char.height! * 0.05)
+
+      paintText(text, lens, '#f31',
+        (this.buffer.getLineLength(i - 1) + 1.25) * this.char.width!,
+        (i - 1) * this.line.height!
+        + this.char.offsetTop!
+        + this.canvas.padding
+        // + this.char.height! * 0.05
+      )
+
+      // text.fillStyle = '#f31'
+      // text.fillText(lens,
       text.font = `normal ${this.fontSize | 0}px ${this.fontAlias}`
     }
   }
@@ -1565,7 +1667,7 @@ class Editor {
       ax = begin.x * this.char.width!
       bx = (end.x - begin.x) * this.char.width!
       ay = begin.y * this.line.height!
-      by = this.line.height! + 0.5
+      by = this.line.height! + .15
       mark.fillRect(xx + ax + eax, yy + ay, bx - eax + ebx, by)
     }
 
@@ -1620,8 +1722,7 @@ class Editor {
       }
     }
 
-    this.postMessage({
-      call: 'onselection',
+    this.emit('selection', {
       text: this.buffer.getAreaText(this.mark.get()),
     })
   }
@@ -1807,9 +1908,9 @@ class Editor {
     this.ctx.outer.fillStyle = theme.caret
 
     this.ctx.outer.fillRect(
-      -this.scroll.pos.x + (this.caret.px.x + this.gutter.width + this.canvas.padding) * this.canvas.pixelRatio, // dx
+      -this.scroll.pos.x + (this.caret.px.x + this.gutter.width + this.canvas.padding) * this.canvas.pixelRatio - 1, // dx
 
-      -this.scroll.pos.y + this.caret.px.y * this.canvas.pixelRatio + this.titlebar.height + this.offsetTop, // dy
+      -this.scroll.pos.y + this.caret.px.y * this.canvas.pixelRatio + this.titlebar.height + this.offsetTop + 4, // dy
       this.caret.width * this.canvas.pixelRatio, // dw
       this.caret.height * this.canvas.pixelRatio // dh
     )
@@ -1926,7 +2027,7 @@ class Editor {
       //   0
       //   // this.c
       // )
-      this.postMessage({ call: 'ondraw' })
+      this.emit('draw')
     }
   }
 
@@ -1963,10 +2064,12 @@ class Editor {
             end: {
               x: this.canvas.scroll!.width,
               y:
-                this.controlEditor.focusedEditor!.realOffsetTop +
-                this.controlEditor.focusedEditor!.canvas.text!.height -
-                this.view!.height +
-                this.titlebar!.height,
+                this.controlEditor.focusedEditor!.realOffsetTop
+                + this.controlEditor.focusedEditor!.canvas.text!.height
+              // - this.page!.height!
+              // -
+              // this.view!.height +
+              // this.titlebar!.height,
             },
           } as Area)
           : (this.canvas.scroll as any), // TODO: ??????????????
@@ -2108,7 +2211,7 @@ class Editor {
       this.moveCaret(this.caret.pos)
 
       this.controlEditor.draw()
-      this.postMessage({ call: 'onfontsize', fontSize })
+      // this.postMessage({ call: 'onfontsize', fontSize })
 
       return
     }
@@ -2152,35 +2255,37 @@ class Editor {
   maybeHoverMarkerByEvent(e: { left?: any; clientX?: any; clientY?: any }) {
     // hover markers
     if (e.clientX == null || e.clientY == null) return
-    const pos = this.getPointByMouse(e as any)
+    const pos = this.getPointByMouse(e as any, true)
     const { offset } = this.buffer.getPoint(pos)
-    let i = 0
-    for (const marker of this.origMarkers) {
+    let i = this.origMarkers.length
+    for (; i--;) {
+      const marker = this.origMarkers[i]
       const { index, size, kind } = marker
-      if (kind !== 'param') continue
+      if (kind !== 'param' && kind !== 'error') continue
 
       if (offset >= index && offset < index + size) {
         if (this.hoveredMarkerIndex !== i) {
           this.hoveredMarkerIndex = i
           this.updateMark()
           this.draw()
-          this.postMessage({
-            call: 'onentermarker',
+          this.emit('entermarker', {
             markerIndex: i,
             marker
           })
         }
         return
       }
-      i++
     }
+    this.leaveMarker()
+  }
+
+  leaveMarker() {
     if (this.hoveredMarkerIndex !== -1) {
       const i = this.hoveredMarkerIndex
       this.hoveredMarkerIndex = -1
       this.updateMark()
       this.draw()
-      this.postMessage({
-        call: 'onleavemarker',
+      this.emit('leavemarker', {
         markerIndex: i,
         marker: this.origMarkers[i]
       })
@@ -2354,7 +2459,7 @@ class Editor {
           const caret = this.caret.pos.copy()
           const align = this.caret.align
 
-          let matchIndent = false
+          const matchIndent = true
 
           if (!this.markActive) {
             clear = true
@@ -2365,7 +2470,7 @@ class Editor {
             this.markSet()
             area = this.mark.get()
             text = this.buffer.getAreaText(area)
-            matchIndent = (text.match(/\S/)?.index as unknown as number) < caret.x
+            // matchIndent = (text.match(/\S/)?.index as unknown as number) <= caret.x
           } else {
             area = this.mark.get()
             if (area.end.x > 0) {
@@ -2376,15 +2481,16 @@ class Editor {
             }
             area.begin.x = 0
             text = this.buffer.getAreaText(area)
-            matchIndent = true
+            // matchIndent = true
           }
 
-          if (text.trimLeft().substr(0, 2) === '\\ ') {
-            add = -2
-            text = text.replace(/^(\s+)?\\ (.+)?/gm, '$1$2')
+
+          if (text.trimStart().startsWith(this.singleComment!)) {
+            add = -(this.singleComment!.length + 1)
+            text = text.replace(this.singleCommentRegExp!, '$1')
           } else {
-            add = +2
-            text = text.replace(/^(\s+)?/gm, '\\ $1')
+            add = +(this.singleComment!.length + 1)
+            text = text.replace(/^(\s+)?/gm, `${this.singleComment!} $1`)
           }
 
           this.mark.set(area)
@@ -2407,7 +2513,7 @@ class Editor {
           this.keepCaretInView()
           this.draw()
           if (e.key === ',') {
-            this.postMessage({ call: 'onblockcomment' })
+            this.emit('blockcomment')
           }
         }
         return
@@ -2497,10 +2603,12 @@ class Editor {
         break
       case 'Cmd ArrowLeft':
         this.moveByWords(-1)
+        if (e.shiftKey) this.markSet()
         this.align()
         break
       case 'Cmd ArrowRight':
         this.moveByWords(+1)
+        if (e.shiftKey) this.markSet()
         this.align()
         break
       case 'Cmd ArrowUp':
@@ -2659,12 +2767,12 @@ class Editor {
       this.focusedEditor?.onblur()
       this.focusedEditor = editor
       if (hasFocus) {
-        this.postMessage({
-          call: 'onfocus',
+        this.emit('focus', {
           id: editor.id,
         })
       }
     }
+
     // if (hasFocus) {
     editor.onfocus()
     // }
@@ -2696,8 +2804,7 @@ class Editor {
       this.controlEditor.focusedEditor = this
       this.controlEditor.hasFocus = true
     }
-    this.postMessage({
-      call: 'onfocus',
+    this.emit('focus', {
       id: this.controlEditor.focusedEditor.id,
     })
     this.controlEditor.draw()
@@ -2772,7 +2879,7 @@ at position: ${start}-${end}
     this.markClear()
   }
 
-  setValue = ({ value, clearHistory }: { value: string, clearHistory?: boolean }) => {
+  setValue = ({ value, clearHistory, scrollToTop }: { value: string, clearHistory?: boolean, scrollToTop?: boolean }) => {
     if (value !== this.buffer.toString()) {
       const prev = this.caret.pos.copy()
       this.markClear()
@@ -2785,6 +2892,10 @@ at position: ${start}-${end}
       this.markClear()
       if (clearHistory) {
         this.clearHistory()
+      }
+      if (scrollToTop) {
+        this.scrollTo({ x: 0, y: 0 })
+        this.setCaret({ x: 0, y: 0 })
       }
     }
   }

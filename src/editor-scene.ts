@@ -11,6 +11,8 @@ export class EditorScene {
   editors = new ImmSet<CanvyElement>()
   caret?: null
 
+  isValidTarget?: (el: HTMLElement) => boolean
+
   ignoredElements: any[] = []
 
   activeEditor?: CanvyElement | null
@@ -28,7 +30,7 @@ export class EditorScene {
   }
 
   created($: EditorScene['$']) {
-    $.effect(({ layout, editors }) => {
+    $.effect(({ layout, editors, isValidTarget }) => {
       if (!editors.size) return
 
       let scrollTop: number = document.documentElement.scrollTop
@@ -61,7 +63,7 @@ export class EditorScene {
           // console.log(rect, pointerPos)
 
           const targetRect = new Rect(rect)
-            .setWidth(rect.width - (e.type === 'wheel' ? 20 : 0))
+          // .setWidth(rect.width - (e.type === 'wheel' ? 20 : 0))
 
           if (normalizedPointerPos.withinRect(targetRect)) {
             return {
@@ -71,6 +73,18 @@ export class EditorScene {
             }
           }
         }
+
+        if ($.activeEditor) {
+          if ($.activeEditor.hoveringMarker) {
+            $.activeEditor.editor.leaveMarker()
+          }
+          const rect = new $.Rect($.activeEditor.getBoundingClientRect())
+          return {
+            pointerPos,
+            normalizedPointerPos: normalizedPointerPos.translate(-rect.x, -rect.y)
+          }
+        }
+
         return { pointerPos, normalizedPointerPos }
       }
 
@@ -115,6 +129,7 @@ export class EditorScene {
           }
         }
 
+        if (cmdKey && shiftKey && key === 'I') return false
         if (cmdKey && shiftKey && key === 'J') return false
 
         if (altKey && (key === 'ArrowLeft' || key === 'ArrowRight')) return false
@@ -157,14 +172,15 @@ export class EditorScene {
         }, 500)
       }
 
-      const isValidTarget = (el: any) => {
-        const part = el.getAttribute?.('part')
+      // const isValidTarget = (el: any) => {
+      //   const part = el.getAttribute?.('part')
 
-        // console.log(part)
-        if (part !== 'item' && part !== 'sliders' && part !== 'side') return false
+      //   // console.log(part)
+      //   if (part !== 'item' && part !== 'sliders' && part !== 'side') return false
 
-        return true
-      }
+      //   return true
+      // }
+
       return $.chain(
         $.on(window).pointermove.raf(e => {
           if (!$.layout.viewMatrix) return
@@ -194,10 +210,9 @@ export class EditorScene {
         $.on(window).pointerdown.capture((e) => {
           const [firstElement] = e.composedPath()
 
-          if (!isValidTarget(firstElement)) return
+          if (!isValidTarget(firstElement as any)) return
 
           {
-
             const editor = (firstElement as any).getRootNode().host
             editor.rect = new $.Rect(editor.getBoundingClientRect())
           }
