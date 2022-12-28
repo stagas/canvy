@@ -48,7 +48,8 @@ export class History extends Event {
     this.timeStart = 0
     this.saveMeta()
   }
-  toJSON() {
+  toJSON(force?: boolean) {
+    if (force) this.save(force, true, true)
     return {
       log: this.log.map(commit =>
         commit
@@ -77,10 +78,10 @@ export class History extends Event {
     }
     this.editor = editor
   }
-  save(force?: boolean) {
-    this.emit('edit', this.editor)
+  save(force?: boolean, noEmit = false, noNeedle?: boolean) {
+    if (!noEmit) this.emit('edit', this.editor)
     if (this.lastNeedle === this.needle) {
-      this.needle++
+      if (!noNeedle) this.needle++
       this.emit('save', this.editor)
       this.saveMeta()
     }

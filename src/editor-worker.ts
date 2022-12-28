@@ -265,9 +265,9 @@ export class Editor extends Event {
 
   lastTexts: string[] = []
 
-  saveHistory(force?: boolean) {
+  saveHistory(force?: boolean, noEmit = false) {
     this.controlEditor.history.setEditor(this)
-    return this.controlEditor.history.save(force)
+    return this.controlEditor.history.save(force, noEmit)
   }
 
   clearHistory() {
@@ -277,6 +277,8 @@ export class Editor extends Event {
 
   singleComment?: string
   singleCommentRegExp?: RegExp
+
+  lastSnapshot: any
 
   async setup(
     data: {
@@ -326,7 +328,7 @@ export class Editor extends Event {
       this.updateMark()
     })
     this.buffer.on('before update', () => {
-      this.saveHistory()
+      this.saveHistory(false, true)
       this.updateText()
       this.updateMark()
     })
@@ -403,6 +405,8 @@ export class Editor extends Event {
       end: new Point({ x: -1, y: -1 }),
     })
 
+    // let snapshot: any
+
     if (!this.isSubEditor && !this.history) {
       this.history = new History(this)
       // this.history.on('save', editor => {
@@ -432,6 +436,8 @@ export class Editor extends Event {
         this.emit('edit', {
           file,
         })
+        // this.lastSnapshot = snapshot
+        // snapshot = this.getSnapshotJson()
       })
     }
 
@@ -452,6 +458,7 @@ export class Editor extends Event {
     this.draw()
 
     this.isReady = true
+    // snapshot = this.lastSnapshot = this.getSnapshotJson()
 
     if (!this.isSubEditor) {
       setTimeout(() => {
@@ -601,16 +608,20 @@ export class Editor extends Event {
     this.draw()
   }
 
-  getSnapshotJson() {
+  getSnapshotJson(force?: boolean) {
     return {
       value: this.buffer.toString(),
       caret: this.caret.pos.copy(),
       scroll: this.scroll.pos.copy(),
-      history: this.history.toJSON()
+      history: this.history.toJSON(force)
     }
   }
 
-  setFromSnapshot(snapshot: any) {
+  getLastSnapshotJson() {
+    return this.lastSnapshot
+  }
+
+  setFromSnapshot(snapshot: any, noScroll?: boolean) {
     this.markClear()
     this.buffer.setText(snapshot.value)
 
@@ -621,8 +632,10 @@ export class Editor extends Event {
 
     this.history.clear()
     if (snapshot.caret && snapshot.scroll && snapshot.history) {
-      this.scrollTo(snapshot.scroll)
-      this.setCaret(snapshot.caret)
+      if (!noScroll) {
+        this.scrollTo(snapshot.scroll)
+        this.setCaret(snapshot.caret)
+      }
       this.restoreHistory(snapshot.history)
     } else {
       this.scrollTo({ x: 0, y: 0 })
@@ -756,7 +769,7 @@ export class Editor extends Event {
     if ('value' in data) this.setText(data.value ?? '')
   }
 
-  erase(moveByChars = 0, inView = true, noHistory = false) {
+  erase(moveByChars = 0, inView = true, noHistory = false, noDraw = false) {
     if (this.markActive && !this.mark.isEmpty()) {
       if (!noHistory) {
         this.saveHistory(true)
@@ -781,24 +794,26 @@ export class Editor extends Event {
       // if (hasLeftSymbol && hasRightSymbol) this.buffer.removeCharAtPoint(this.caret.pos)
     }
 
-    this.updateSizes()
-    this.updateText()
-    this.updateMark()
-    if (inView) this.keepCaretInView('ease', false)
-    this.draw()
-    this.highlightBlock()
+    if (!noDraw) {
+      this.updateSizes()
+      this.updateText()
+      this.updateMark()
+      if (inView) this.keepCaretInView('ease', false)
+      this.draw()
+      this.highlightBlock()
+    }
   }
 
   align() {
     this.caret.align = this.caret.pos.x
   }
 
-  delete(inView?: boolean, noHistory?: boolean): void {
+  delete(inView?: boolean, noHistory?: boolean, noDraw?: boolean): void {
     if (this.isEndOfFile()) {
       if (this.markActive && !this.isBeginOfFile()) return this.backspace(inView, noHistory)
       return
     }
-    this.erase(0, inView, noHistory)
+    this.erase(0, inView, noHistory, noDraw)
   }
 
   backspace(inView?: boolean, noHistory?: boolean) {
@@ -809,8 +824,8 @@ export class Editor extends Event {
     this.erase(-1, inView, noHistory)
   }
 
-  insert(text: string, noRules = false, inView = true, noLog = false) {
-    if (this.markActive && !this.mark.isEmpty()) this.delete(inView, noLog)
+  insert(text: string, noRules = false, inView = true, noLog = false, noUpdateMark = false) {
+    if (this.markActive && !this.mark.isEmpty()) this.delete(inView, noLog, noUpdateMark)
     this.markClear()
     // this.emit('input', text, this.caret.copy(), this.mark.copy(), this.mark.active);
 
@@ -876,9 +891,12 @@ export class Editor extends Event {
 
     this.updateSizes()
     this.updateText()
-    this.updateMark()
+    if (!noUpdateMark) {
+      this.updateMark()
+    }
     if (inView) this.keepCaretInView()
     this.draw()
+    this.highlightBlock()
   }
 
   markBegin(area?: Area | false) {
@@ -893,7 +911,7 @@ export class Editor extends Event {
     }
   }
 
-  markSet(reverse?: boolean) {
+  markSet(reverse?: boolean, noDraw = false) {
     if (this.markActive) {
       if (reverse) {
         this.mark.end.set(this.mark.begin)
@@ -902,8 +920,10 @@ export class Editor extends Event {
       } else {
         this.mark.end.set(this.caret.pos)
       }
-      this.updateMark()
-      this.draw()
+      if (!noDraw) {
+        this.updateMark()
+        this.draw()
+      }
     }
   }
 
@@ -1347,10 +1367,10 @@ export class Editor extends Event {
         Math.max(0, (!isWorker && this.autoResize
           ? 0
           : this.canvas.text.height
-          - this.canvas.padding * this.canvas.pixelRatio * 4
+          // - this.canvas.padding * this.canvas.pixelRatio * 4
           + 1
         )
-          - this.page!.height! / 6
+          - this.page!.height!
         )
 
         // -
@@ -1465,14 +1485,14 @@ export class Editor extends Event {
   }
 
   origMarkers: Marker[] = []
-  onmarkers = ({ markers }: { markers: Marker[] }) => {
+  onmarkers = ({ markers }: { markers: Marker[] }, noDraw?: boolean) => {
     this.origMarkers = markers
     this.markers = markers.map(({ index, size, color, hoverColor, kind }) => {
       const begin = this.buffer.getOffsetPoint(index)
       const end = this.buffer.getOffsetPoint(index + size)
       return Object.assign(new Area({ begin, end }), { color, hoverColor, kind })
     })
-    if (this.isReady) {
+    if (!noDraw && this.isReady) {
       this.updateMark()
       this.draw()
       if (this.hoveredMarkerIndex) {
@@ -1636,7 +1656,7 @@ export class Editor extends Event {
 
   markers: (Area & { color?: string })[] = []
 
-  updateMark = () => {
+  updateMarkSync = () => {
     if (!this.ctx) return
 
     const { mark } = this.ctx
@@ -1726,6 +1746,8 @@ export class Editor extends Event {
       text: this.buffer.getAreaText(this.mark.get()),
     })
   }
+
+  updateMark = $.queue.task(this.updateMarkSync)
 
   updateTitle() {
     if (!this.ctx) return
@@ -2201,16 +2223,17 @@ export class Editor extends Event {
     let { deltaX, deltaY } = e
     if (e.cmdKey) {
       let fontSize = this.fontSize
-      fontSize += Math.sign(deltaY) * 0.5
-      fontSize = +Math.max(1, fontSize).toFixed(1)
+      fontSize += Math.sign(deltaY) * 0.25
+      fontSize = +Math.max(1, fontSize).toFixed(2)
       this.fontSize = fontSize
       this.updateChar()
-      this.updateSizes(true)
       this.updateText()
+      this.updateSizes(true)
       this.updateMark()
       this.moveCaret(this.caret.pos)
 
       this.controlEditor.draw()
+      this.emit('fontsize', { fontSize })
       // this.postMessage({ call: 'onfontsize', fontSize })
 
       return
@@ -2842,26 +2865,27 @@ export class Editor extends Event {
     this.updateChar()
     this.updateSizes(true)
     this.updateTextSync()
-    this.updateMark()
+    this.updateMarkSync()
     this.drawSync()
     // TODO: this needed?
     // postMessage({ call: 'onresize' })
   })
 
-  replaceChunk = ({ start, end, text, code }: { start: number, end: number, text: string, code: string }) => {
-    if (code !== this.buffer.toString()) {
+  replaceChunk = ({ start, end, text, code, markers }: { start: number, end: number, text: string, code: string, markers?: Marker[] }) => {
+    const own = this.buffer.toString()
+    if (code !== own) {
       throw new Error(`Attempt to replace chunk but own buffer has diverged.
 
 Own buffer:
 -----------
-"${this.buffer.toString()}"
+"${own}"
 
 Other buffer:
 "${code}"
 
 Attempt to replace chunk:
 
-"${text}"
+"${own.slice(start, end)}" with "${text}"
 
 at position: ${start}-${end}
 `)
@@ -2873,10 +2897,17 @@ at position: ${start}-${end}
     this.moveCaret(sp)
     this.markBegin()
     this.moveCaret(ep)
-    this.markSet()
-    this.insert(text, true, false)
+    this.markSet(false, true)
+    this.insert(text, true, false, false, true)
     this.moveCaret(prev)
     this.markClear()
+
+    if (markers) {
+      queueMicrotask(() => {
+        this.onmarkers({ markers })
+      })
+    }
+
   }
 
   setValue = ({ value, clearHistory, scrollToTop }: { value: string, clearHistory?: boolean, scrollToTop?: boolean }) => {
@@ -2897,6 +2928,7 @@ at position: ${start}-${end}
         this.scrollTo({ x: 0, y: 0 })
         this.setCaret({ x: 0, y: 0 })
       }
+      // this.history.save()
     }
   }
 }

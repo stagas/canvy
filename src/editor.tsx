@@ -140,6 +140,7 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
 
   caret: any
   scene?: EditorScene
+  padding?= 3
 
   editor!: Editor
 
@@ -256,8 +257,8 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
     }
   )
 
-  setFromSnapshot = $(this).reduce(({ editor }) => (snapshot: any) => {
-    return editor.setFromSnapshot(snapshot)
+  setFromSnapshot = $(this).reduce(({ editor }) => (snapshot: any, noScroll?: boolean) => {
+    return editor.setFromSnapshot(snapshot, noScroll)
   })
 
   hoveringMarkerIndex?: number | null
@@ -280,10 +281,9 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
     }
   )
 
-  replaceChunk = $(this).reduce(({ editor }) => function callReplaceChunk(params: { start: number, end: number, text: string, code: string }) {
+  replaceChunk = $(this).reduce(({ editor }) => function callReplaceChunk(params: { start: number, end: number, text: string, code: string, markers?: Marker[] }) {
     return editor.replaceChunk(params)
   })
-
 
   setMarkers = $(this).reduce(({ editor }) => function setMarkers(markers: Marker[]) {
     return editor.onmarkers({ markers })
@@ -351,6 +351,8 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
       $.editor.on('resize', (...args) => this._onresize(...args))
       // @ts-ignore
       $.editor.on('caret', (...args) => this.setCaret(...args))
+      // @ts-ignore
+      $.editor.on('fontsize', (...args) => this._onfontsize(...args))
 
       // const { port1, port2 } = new MessageChannel()
 
@@ -419,6 +421,7 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
         fontSize: $.fontSize,
         singleComment: $.singleComment,
         titlebarHeight: 0,
+        padding: $.padding,
         // autoResize: true,
         files: files.map(file => file.toJSON()),
         outerCanvas: canvas, // TODO: in a real worker situation this should be transferred

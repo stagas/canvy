@@ -98,8 +98,10 @@ export class EditorScene {
       })
 
       const handleKeyEvent = (e: KeyboardEvent, editor: CanvyElement) => {
-        const { key, which, altKey, shiftKey, ctrlKey, metaKey } = e
+        const { key, which, code, altKey, shiftKey, ctrlKey, metaKey } = e
         const cmdKey = $.isMac ? metaKey : ctrlKey
+
+        if (cmdKey && code === 'Backquote') return false
 
         // this is a whitelist
         // i.e these keypresses are not going
