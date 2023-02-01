@@ -93,11 +93,11 @@
     "vite": "^2.7.1"
   },
   "dependencies": {
-    "everyday-utils": "^1.6.0",
+    "everyday-utils": "^1.7.0",
     "geometrik": "^1.2.0",
     "get-element-offset": "^1.1.0",
     "immutable-map-set": "^1.0.0",
-    "minimal-view": "^1.3.0",
+    "minimal-view": "^1.4.0",
     "rpc-mini": "^1.1.0",
     "sigl": "^2.0.0",
     "zerolag": "^1.1.0"

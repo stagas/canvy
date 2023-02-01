@@ -33,11 +33,12 @@ export class EditorScene {
     $.effect(({ layout, editors, isValidTarget }) => {
       if (!editors.size) return
 
+      let lastScrollTime = 0
       let scrollTop: number = document.documentElement.scrollTop
-      window.addEventListener('scroll', () => {
-        scrollTop = document.documentElement.scrollTop
-        // console.log(scrollTop)
-      })
+
+      // let didMovePointer = false
+
+      const rects = new Map<any, $.Rect>()
 
       const findEditorFromEvent = (e: PointerEvent | WheelEvent) => {
         const pointerPos = new $.Point(e.pageX, e.pageY)
@@ -60,6 +61,12 @@ export class EditorScene {
 
         for (const editor of editors) {
           const rect = new $.Rect(editor.getBoundingClientRect())
+          if (!rects.get(editor)?.equals(rect)) {
+            lastScrollTime = performance.now()
+            intentMove = false
+            // wheeling++
+          }
+          rects.set(editor, rect)
           // console.log(rect, pointerPos)
 
           const targetRect = new Rect(rect)
@@ -153,15 +160,33 @@ export class EditorScene {
         editor.handleEvent(e.type, ev)
       }
 
+      let wheeling = 0
+      const debounceOffWheeling = $.queue.debounce(450)(() => {
+        wheeling = 0
+      })
+
       const handleMouseEvent = (name: string, e: PointerEvent | WheelEvent, editor: CanvyElement, pos: $.Point) => {
         // if ('deltaX' in e && Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
-        e.stopPropagation()
-        e.preventDefault()
-        editor.handleEvent(name, {
+        const result = editor.handleEvent(name, {
           ...mouseEventToJson(e),
           clientX: pos.x, //- editor.pos!.x + (layout.pos?.x ?? 0),
           clientY: pos.y //- editor.pos!.y + (layout.pos?.y ?? 0),
         })
+        if (result !== false || (wheeling > 0 && wheeling < 15)) {
+          if (result === true) wheeling = 1
+          e.stopPropagation()
+          e.preventDefault()
+          if (name === 'mousewheel') {
+            if (result === false) {
+              wheeling += 1
+              // didMovePointer = false
+            }
+            debounceOffWheeling()
+          }
+        } else {
+          wheeling = 0
+          intentMove = false
+        }
       }
 
       let isDown = false
@@ -169,9 +194,9 @@ export class EditorScene {
       let intentMoveTimeout: any
       const stopIntentMove = () => {
         clearTimeout(intentMoveTimeout)
-        intentMoveTimeout = setTimeout(() => {
-          intentMove = false
-        }, 500)
+        // intentMoveTimeout = setTimeout(() => {
+        //   intentMove = false
+        // }, 200)
       }
 
       // const isValidTarget = (el: any) => {
@@ -184,7 +209,13 @@ export class EditorScene {
       // }
 
       return $.chain(
+        $.on(window, 'scroll')(() => {
+          lastScrollTime = performance.now()
+          scrollTop = document.documentElement.scrollTop
+          // console.log(scrollTop)
+        }),
         $.on(window).pointermove.raf(e => {
+          // didMovePointer = true
           if (!$.layout.viewMatrix) return
 
           if (!$.activeEditor && $.layout.viewMatrix.a < 0.65) return
@@ -293,13 +324,17 @@ export class EditorScene {
 
           if (!isValidTarget(firstElement)) return
 
-          if (editor && ($.activeEditor || (
+          if (editor && performance.now() - lastScrollTime > 300) {
+            intentMove = editor
+          }
+
+          if (editor && (
             // (layout.viewMatrix.a >= 0.65)
             // && layout.state.isIdle
             // && editor.rect!.withinRect(layout.viewFrameNormalRect.zoomLinear(50))
             // &&
             intentMove === editor
-          ))) {
+          )) {
             clearTimeout(intentMoveTimeout)
             handleMouseEvent('mousewheel', e, editor, normalizedPointerPos)
           }

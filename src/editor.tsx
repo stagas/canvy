@@ -134,6 +134,10 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
   @$.out() fontSize = 11
   @$.attr() focused = false
 
+  canvas?: HTMLCanvasElement
+  font?: string | undefined
+  fontName?: string | undefined
+
   initialValue?: string
 
   singleComment = '//'
@@ -166,9 +170,6 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
   focusedFile = $(this).reduce.once(({ files }) => files[0])
 
   @$.attr() ready = false
-
-  canvas?: HTMLCanvasElement
-  font?: string
 
   setCaret({ caret }: any) {
     this.caret = caret
@@ -301,6 +302,10 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
     })
   })
 
+  setReadableOnly = $(this).reduce(({ editor }) => function setReadableOnly(readableOnly: boolean) {
+    return editor.setReadableOnly(readableOnly)
+  })
+
   mounted($: CanvyElement['$']) {
     $.effect(({ host, scene, _onblur }) => {
       host.tabIndex = 0
@@ -418,6 +423,7 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
       editor.setup({
         ...size.scale(pixelRatio).toSizeObject(),
         font: $.font,
+        fontName: $.fontName,
         fontSize: $.fontSize,
         singleComment: $.singleComment,
         titlebarHeight: 0,
@@ -744,7 +750,7 @@ export class CanvyElement extends $.mix(HTMLElement, $.mixins.layout()) {
     //   if (handled != null) {
     //     return false
     //   }
-    ; (this.editor as any)['on' + eventName]({ ...data })
+    return (this.editor as any)['on' + eventName]({ ...data })
   }
 }
 

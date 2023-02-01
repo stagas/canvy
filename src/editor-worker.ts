@@ -17,12 +17,17 @@ function paintText(c: CanvasRenderingContext2D | OffscreenCanvasRenderingContext
   text: string,
   color: string,
   x: number,
-  y: number) {
-  c.lineWidth = 1.95
-  c.strokeStyle = '#0008'
-  c.miterLimit = 2
-  c.lineJoin = 'round'
-  c.strokeText(text, x, y + 0.8)
+  y: number,
+  stroke = false
+) {
+  if (stroke) {
+    c.lineWidth = 1.95
+    c.strokeStyle = '#0008'
+    c.miterLimit = 2
+    c.lineJoin = 'round'
+    c.strokeText(text, x, y + 0.8)
+  }
+
   c.fillStyle = color
   c.fillText(text, x, y)
 }
@@ -45,7 +50,7 @@ const colors = {
   markHover: '#44a',
   caret: '#f4f4f4',
   gutter: '#333',
-  scrollbar: '#555',
+  scrollbar: '#6577',
   lineNumbers: '#888',
   titlebar: '#000',
   title: '#557',
@@ -161,6 +166,7 @@ export class Editor extends Event {
   extraTitle: any
   focusedEditor: Editor | null
   font: any
+  fontName?: string | undefined
   fontAlias!: string
   fontSize: number
   gutter!: { padding: number; width: number; height: number; size?: number }
@@ -285,6 +291,7 @@ export class Editor extends Event {
       outerCanvas?: any
       extraTitle?: any
       font?: any
+      fontName?: string
       fontSize?: any
       autoResize?: any
       padding?: any
@@ -302,6 +309,7 @@ export class Editor extends Event {
     this.setupData = data
     this.extraTitle = data.extraTitle ?? ''
     this.font = data.font
+    this.fontName = data.fontName
     this.fontSize = data.fontSize ?? this.fontSize
     this.autoResize = data.autoResize ?? this.autoResize
 
@@ -335,6 +343,8 @@ export class Editor extends Event {
 
     if (this.font) {
       this.fontAlias = 'mono'
+    } else if (this.fontName) {
+      this.fontAlias = this.fontName
     } else {
       this.fontAlias = 'monospace'
     }
@@ -513,7 +523,7 @@ export class Editor extends Event {
     }
     this.canvas.title.height = Math.max(1, this.titlebar.height)
 
-    this.scrollbar = { width: 6 }
+    this.scrollbar = { width: 12 }
     this.scrollbar.margin = Math.ceil(this.scrollbar.width / 2)
     this.scrollbar.view = {
       width: 0,
@@ -536,7 +546,7 @@ export class Editor extends Event {
     this.caret = {
       pos: this.caret?.pos ?? new Point(),
       px: this.caret?.px ?? new Point(),
-      align: 0,
+      align: this.caret?.align || 0,
       width: 1, //(this.fontSize / 8) | 0,
       height: this.line.height,
     }
@@ -770,6 +780,8 @@ export class Editor extends Event {
   }
 
   erase(moveByChars = 0, inView = true, noHistory = false, noDraw = false) {
+    if (this.readableOnly) return
+
     if (this.markActive && !this.mark.isEmpty()) {
       if (!noHistory) {
         this.saveHistory(true)
@@ -809,6 +821,8 @@ export class Editor extends Event {
   }
 
   delete(inView?: boolean, noHistory?: boolean, noDraw?: boolean): void {
+    if (this.readableOnly) return
+
     if (this.isEndOfFile()) {
       if (this.markActive && !this.isBeginOfFile()) return this.backspace(inView, noHistory)
       return
@@ -817,6 +831,8 @@ export class Editor extends Event {
   }
 
   backspace(inView?: boolean, noHistory?: boolean) {
+    if (this.readableOnly) return
+
     if (this.isBeginOfFile()) {
       if (this.markActive && !this.isEndOfFile()) return this.delete(inView, noHistory)
       return
@@ -825,6 +841,8 @@ export class Editor extends Event {
   }
 
   insert(text: string, noRules = false, inView = true, noLog = false, noUpdateMark = false) {
+    if (this.readableOnly) return
+
     if (this.markActive && !this.mark.isEmpty()) this.delete(inView, noLog, noUpdateMark)
     this.markClear()
     // this.emit('input', text, this.caret.copy(), this.mark.copy(), this.mark.active);
@@ -1547,7 +1565,7 @@ export class Editor extends Event {
     //   i++
     // }
 
-    const bgBlack = '#000b'
+    const bgBlack = '#0000'
     // i = 0, x = 0, y = 0, lastNewLine = 0
     const queue = []
     let lens
@@ -1966,7 +1984,7 @@ export class Editor extends Event {
   drawVertScrollbar() {
     this.ctx.outer.strokeStyle = theme.scrollbar
     this.ctx.outer.lineWidth = this.scrollbar.width
-    // this.ctx.outer.lineCap = 'round'
+    this.ctx.outer.lineCap = 'round'
 
     const y =
       (this.scroll.pos.y / (this.canvas.text.height + this.subEditorsHeight - this.canvas.height || 1)) *
@@ -1977,8 +1995,8 @@ export class Editor extends Event {
     // indicator, so it's commented out. TODO: make configurable
     // if ((this.scrollbar.scale!.height >= 1 && y > 2) || this.scrollbar.scale!.height < 1) {
     this.ctx.outer.beginPath()
-    this.ctx.outer.moveTo(this.canvas.width - this.scrollbar.margin!, y)
-    this.ctx.outer.lineTo(this.canvas.width - this.scrollbar.margin!, y + this.scrollbar.vert!)
+    this.ctx.outer.moveTo(this.canvas.width - this.scrollbar.margin!, y + this.scrollbar.margin!)
+    this.ctx.outer.lineTo(this.canvas.width - this.scrollbar.margin!, y + this.scrollbar.vert! - 30 - this.scrollbar.margin!)
     this.ctx.outer.stroke()
     // }
   }
@@ -2001,8 +2019,8 @@ export class Editor extends Event {
       x + this.scrollbar.view!.width - this.scrollbar.horiz! > 12
     ) {
       this.ctx.outer.beginPath()
-      this.ctx.outer.moveTo(this.canvas.gutter.width + x, y)
-      this.ctx.outer.lineTo(this.canvas.gutter.width + x + this.scrollbar.horiz! + 1, y)
+      this.ctx.outer.moveTo(this.canvas.gutter.width + x + this.scrollbar.margin!, y)
+      this.ctx.outer.lineTo(this.canvas.gutter.width + x + this.scrollbar.horiz! + 1 - this.scrollbar.margin! * 2, y)
       this.ctx.outer.stroke()
     }
   }
@@ -2075,34 +2093,38 @@ export class Editor extends Event {
   }
 
   scrollBy(d: PointLike, animType?: AnimType, clamp = false) {
-    this.scroll.target.set(
-      Point.clamp(
-        clamp
-          ? ({
-            begin: {
-              x: 0,
-              y: this.controlEditor.focusedEditor!.realOffsetTop,
-            },
-            end: {
-              x: this.canvas.scroll!.width,
-              y:
-                this.controlEditor.focusedEditor!.realOffsetTop
-                + this.controlEditor.focusedEditor!.canvas.text!.height
-              // - this.page!.height!
-              // -
-              // this.view!.height +
-              // this.titlebar!.height,
-            },
-          } as Area)
-          : (this.canvas.scroll as any), // TODO: ??????????????
-        this.scroll.pos.add(d)
-      )
+    const target = Point.clamp(
+      clamp
+        ? ({
+          begin: {
+            x: 0,
+            y: this.controlEditor.focusedEditor!.realOffsetTop,
+          },
+          end: {
+            x: this.canvas.scroll!.width,
+            y:
+              this.controlEditor.focusedEditor!.realOffsetTop
+              + this.controlEditor.focusedEditor!.canvas.text!.height
+            // - this.page!.height!
+            // -
+            // this.view!.height +
+            // this.titlebar!.height,
+          },
+        } as Area)
+        : (this.canvas.scroll as any), // TODO: ??????????????
+      this.scroll.pos.add(d)
     )
+
+    if (this.scroll.target.equal(target)) return false
+
+    this.scroll.target.set(target)
     if (!animType) {
       this.scrollTo(this.scroll.target)
     } else {
       this.animScrollStart(animType)
     }
+
+    return true
   }
 
   animScrollCancel() {
@@ -2241,11 +2263,11 @@ export class Editor extends Event {
     if (Math.abs(deltaX) > Math.abs(deltaY)) {
       if (!this.maybeDelegateMouseEvent('onmousewheel', e as any)) {
         deltaX *= 0.75
-        this.scrollBy({ x: deltaX, y: 0 }, 'linear')
+        return this.scrollBy({ x: deltaX, y: 0 }, 'linear')
       }
     } else {
       deltaY *= 0.75
-      this.scrollBy({ x: 0, y: deltaY }, 'linear')
+      return this.scrollBy({ x: 0, y: deltaY }, 'linear')
     }
   }
 
@@ -2381,6 +2403,8 @@ export class Editor extends Event {
     switch (this.pressed) {
       case 'Cmd z':
         {
+          if (this.readableOnly) break
+
           const editor = this.controlEditor.history.undo(this.controlEditor.history.needle - 1)
           if (editor) this.setFocusedEditor(editor)
           this.draw()
@@ -2388,6 +2412,8 @@ export class Editor extends Event {
         break
       case 'Cmd y':
         {
+          if (this.readableOnly) break
+
           const editor = this.controlEditor.history.redo(this.controlEditor.history.needle + 1)
           if (editor) this.setFocusedEditor(editor)
           this.draw()
@@ -2395,6 +2421,8 @@ export class Editor extends Event {
         break
       case 'Tab':
         {
+          if (this.readableOnly) break
+
           const tab = ' '.repeat(this.tabSize)
 
           let add
@@ -2472,6 +2500,8 @@ export class Editor extends Event {
       // eslint-disable-next-line no-fallthrough
       case 'Cmd /':
         {
+          if (this.readableOnly) break
+
           let add
           let area
           let text
@@ -2542,6 +2572,7 @@ export class Editor extends Event {
         return
       case 'Cmd D':
         {
+          if (this.readableOnly) break
           this.align()
           const area = this.mark.get()
           if (area.isEmpty()) {
@@ -2636,6 +2667,7 @@ export class Editor extends Event {
         break
       case 'Cmd ArrowUp':
         if (e.shiftKey) {
+          if (this.readableOnly) break
           this.align()
           this.markBegin(false)
           const area = this.mark.get()
@@ -2656,6 +2688,7 @@ export class Editor extends Event {
         break
       case 'Cmd ArrowDown':
         if (e.shiftKey) {
+          if (this.readableOnly) break
           this.align()
           this.markBegin(false)
           const area = this.mark.get()
@@ -2912,6 +2945,8 @@ at position: ${start}-${end}
 
   setValue = ({ value, clearHistory, scrollToTop }: { value: string, clearHistory?: boolean, scrollToTop?: boolean }) => {
     if (value !== this.buffer.toString()) {
+      const readableOnly = this.readableOnly
+      this.readableOnly = false
       const prev = this.caret.pos.copy()
       this.markClear()
       this.moveBeginOfFile()
@@ -2928,8 +2963,14 @@ at position: ${start}-${end}
         this.scrollTo({ x: 0, y: 0 })
         this.setCaret({ x: 0, y: 0 })
       }
+      this.readableOnly = readableOnly
       // this.history.save()
     }
+  }
+
+  readableOnly = false
+  setReadableOnly = (readableOnly: boolean) => {
+    this.readableOnly = readableOnly
   }
 }
 
