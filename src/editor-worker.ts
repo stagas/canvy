@@ -35,7 +35,7 @@ function paintText(c: CanvasRenderingContext2D | OffscreenCanvasRenderingContext
 type PointLike = Partial<Point>
 // type AreaLike = Partial<Area>
 const backgrounds = {
-  comment: '#53ea'
+  // comment: '#53ea'
 }
 
 const colors = {
@@ -66,7 +66,7 @@ const colors = {
   // number: "#95e124", //"#fff", //"#f2e700", //"#fff", //"#ff69fe",
   number: '#ff5', // "#13bcff", //"#0f0", //"#ff69fe",
   string: '#fff',
-  comment: '#fff',
+  comment: '#666',
   symbol: '#888', // '#626288', //, '#6262f2',
   // mark: '#444',
   meta: '#fff',
